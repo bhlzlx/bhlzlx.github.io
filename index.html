@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebHID 设备调试工具</title>
+    <title>三模HITBOX配置工具</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🔌 WebHID 设备调试工具</h1>
-            <p class="subtitle">连接 HID 设备，实时收发数据</p>
+            <h1>三模HITBOX配置工具</h1>
+            <p class="subtitle">仅适用于bilibili-久寿川方案</p>
         </header>
 
         <!-- 连接区域 -->
@@ -36,6 +36,7 @@
             <div class="config-tabs">
                 <button id="configTab1" class="config-tab config-tab-active">无线/睡眠配置 (0x01)</button>
                 <button id="configTab2" class="config-tab">按键映射配置 (0x02)</button>
+                <button id="configTab3" class="config-tab">网络名称配置 (0x03)</button>
             </div>
 
             <!-- 配置类型 0x01: 无线/睡眠 -->
@@ -52,8 +53,8 @@
                     <div class="config-item">
                         <label for="socd">SOCD:</label>
                         <select id="socd" class="input-field short-input">
-                            <option value="0">回中</option>
-                            <option value="1" selected>后覆盖</option>
+                            <option value="0" selected>回中</option>
+                            <option value="1">后覆盖</option>
                             <option value="2">前覆盖</option>
                             <option value="3">上优先</option>
                         </select>
@@ -74,11 +75,11 @@
                     </div>
                 </div>
                 <div class="config-preview">
-                    <span>配置字节预览: </span>
-                    <code id="configPreview" class="preview-code">01 00 00 00 00 00</code>
+                    <span>0x01 预览: </span>
+                    <code id="configPreview" class="preview-code">01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00</code>
                 </div>
                 <div class="config-actions">
-                    <button id="sendConfigBtn" class="btn btn-success" disabled>📤 发送配置 (Report ID=0)</button>
+                    <button id="sendConfigBtn" class="btn btn-success" disabled>📤 发送配置 0x01</button>
                     <button id="resetConfigBtn" class="btn btn-warning">↺ 重置为默认</button>
                     <button id="readConfigBtn" class="btn btn-primary" disabled>📩 读取配置 (Feature Report)</button>
                 </div>
@@ -88,7 +89,7 @@
             <div id="configPanel2" class="config-form hidden">
                 <div class="config-info-bar">
                     <span>配置类型: <strong>0x02</strong></span>
-                    <span>每个 Report 6 字节: <code>[0x02] [键位(0-19)] [映射值×4]</code></span>
+                    <span>每个 Report 16 字节: <code>[0x02] [键位(0-19)] [映射值×4] [填充×10]</code></span>
                 </div>
                 <div class="keymap-container" id="keymapContainer">
                     <!-- 由 JS 动态生成 -->
@@ -98,29 +99,27 @@
                     <button id="resetKeymapBtn" class="btn btn-warning">↺ 重置为默认映射</button>
                 </div>
             </div>
-        </section>
 
-        <!-- 发送数据区域 -->
-        <section class="section send-section">
-            <h2>📤 发送数据</h2>
-            <div class="send-controls">
-                <div class="form-row">
-                    <label for="reportId">Report ID (0-255):</label>
-                    <input type="number" id="reportId" min="0" max="255" value="0" class="input-field short-input">
+            <!-- 配置类型 0x03: 网络名称 -->
+            <div id="configPanel3" class="config-form hidden">
+                <div class="config-info-bar">
+                    <span>配置类型: <strong>0x03</strong></span>
+                    <span>16 字节: <code>[0x03] [网络名称×15, null-terminated ASCII]</code></span>
                 </div>
-                <div class="form-row">
-                    <label for="hexData">16进制数据:</label>
-                    <textarea id="hexData" rows="3" placeholder="输入16进制数据，例如: AA BB CC DD EE FF" class="input-field"></textarea>
+                <div class="config-items">
+                    <div class="config-item">
+                        <label for="networkName">无线名称:</label>
+                        <input type="text" id="networkName" maxlength="16" value="CH58X-Gamepad" class="input-field" placeholder="最大16个字符">
+                        <span class="config-bit">15 bytes 有效, 以 0x00 结尾</span>
+                    </div>
                 </div>
-                <div class="form-row">
-                    <label for="reportType">Report 类型:</label>
-                    <select id="reportType" class="input-field short-input">
-                        <option value="output">Output Report</option>
-                        <option value="feature">Feature Report</option>
-                    </select>
+                <div class="config-preview">
+                    <span>0x03 预览: </span>
+                    <code id="networkNamePreview" class="preview-code">03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00</code>
                 </div>
-                <button id="sendBtn" class="btn btn-success" disabled>📤 发送</button>
-                <button id="clearHexBtn" class="btn btn-warning">🗑️ 清空</button>
+                <div class="config-actions">
+                    <button id="sendNetworkNameBtn" class="btn btn-success" disabled>📤 发送网络名 0x03</button>
+                </div>
             </div>
         </section>
 

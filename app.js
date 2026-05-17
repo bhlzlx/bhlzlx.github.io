@@ -15,12 +15,6 @@ const connectionStatus = document.getElementById('connectionStatus');
 const deviceInfo = document.getElementById('deviceInfo');
 const deviceInfoContent = document.getElementById('deviceInfoContent');
 
-const reportIdInput = document.getElementById('reportId');
-const hexDataInput = document.getElementById('hexData');
-const reportTypeSelect = document.getElementById('reportType');
-const sendBtn = document.getElementById('sendBtn');
-const clearHexBtn = document.getElementById('clearHexBtn');
-
 const clearReportsBtn = document.getElementById('clearReportsBtn');
 const receiveStatus = document.getElementById('receiveStatus');
 const reportsContainer = document.getElementById('reportsContainer');
@@ -30,8 +24,11 @@ const wirelessModeSelect = document.getElementById('wirelessMode');
 const socdSelect = document.getElementById('socd');
 const sleepEnableSelect = document.getElementById('sleepEnable');
 const sleepTimeInput = document.getElementById('sleepTime');
+const networkNameInput = document.getElementById('networkName');
 const configPreviewSpan = document.getElementById('configPreview');
+const networkNamePreviewSpan = document.getElementById('networkNamePreview');
 const sendConfigBtn = document.getElementById('sendConfigBtn');
+const sendNetworkNameBtn = document.getElementById('sendNetworkNameBtn');
 const resetConfigBtn = document.getElementById('resetConfigBtn');
 const readConfigBtn = document.getElementById('readConfigBtn');
 const saveAndRebootBtn = document.getElementById('saveAndRebootBtn');
@@ -39,8 +36,10 @@ const saveAndRebootBtn = document.getElementById('saveAndRebootBtn');
 // 配置标签切换 DOM
 const configTab1 = document.getElementById('configTab1');
 const configTab2 = document.getElementById('configTab2');
+const configTab3 = document.getElementById('configTab3');
 const configPanel1 = document.getElementById('configPanel1');
 const configPanel2 = document.getElementById('configPanel2');
+const configPanel3 = document.getElementById('configPanel3');
 
 // 按键映射 DOM
 const keymapContainer = document.getElementById('keymapContainer');
@@ -66,7 +65,8 @@ const DEFAULT_CONFIG = {
     wirelessMode: 1,   // 1=BLE
     socd: 0,           // 0=回中
     sleepEnable: 1,    // 1=启用
-    sleepTime: 5       // 5 分钟
+    sleepTime: 5,      // 5 分钟
+    networkName: 'CH58X-Gamepad'
 };
 
 // ============ 按键映射数据 ============
@@ -133,14 +133,14 @@ const DEFAULT_KEYMAP = [
 ];
 
 /**
- * 将 UI 配置项打包成 6 字节数据 (配置类型 0x01)
+ * 将 UI 配置项打包成 16 字节数据 (配置类型 0x01)
  * Byte 0: 0x01 (固定配置类型)
  * Byte 1: 位域打包:
  *   Bit 0   - 无线模式 (1=BLE, 0=2.4G)
  *   Bits 1-2 - SOCD (0=回中, 1=后覆盖, 2=前覆盖, 3=上优先)
  *   Bit 3   - 启用睡眠 (1=启用, 0=禁用)
  *   Bits 4-7 - 无线睡眠时间 (编码: 0~15 映射到 5~20 分钟)
- * Byte 2-5: 填充 0x00
+ * Byte 2-15: 填充 0x00
  */
 function packConfig() {
     const wirelessMode = parseInt(wirelessModeSelect.value, 10);
@@ -158,11 +158,35 @@ function packConfig() {
     configByte |= (sleepEnable & 0x01) << 3;        // Bit 3
     configByte |= (sleepCode & 0x0F) << 4;          // Bits 7-4
 
-    return new Uint8Array([0x01, configByte, 0x00, 0x00, 0x00, 0x00]);
+    const report = new Uint8Array(16);
+    report[0] = 0x01;
+    report[1] = configByte;
+    // bytes 2-15 已初始化为 0x00
+
+    return report;
 }
 
 /**
- * 解析 2 字节配置数据并更新 UI
+ * 将网络名称打包成 16 字节数据 (配置类型 0x03)
+ * Byte 0: 0x03 (固定配置类型)
+ * Byte 1-15: 网络名称 (15 bytes, null-terminated ASCII)
+ */
+function packNetworkName() {
+    const report = new Uint8Array(16);
+    report[0] = 0x03;
+
+    const name = (networkNameInput.value || '').trim() || DEFAULT_CONFIG.networkName;
+    const encoder = new TextEncoder();
+    const nameBytes = encoder.encode(name);
+    for (let i = 0; i < 15; i++) {
+        report[1 + i] = i < nameBytes.length ? nameBytes[i] : 0x00;
+    }
+
+    return report;
+}
+
+/**
+ * 解析配置数据并更新 UI
  */
 function unpackConfig(data) {
     if (data.length < 2) {
@@ -171,41 +195,61 @@ function unpackConfig(data) {
     }
 
     const configType = data[0];
-    const configByte = data[1];
 
-    const wirelessMode = (configByte >> 0) & 0x01;
-    const socd = (configByte >> 1) & 0x03;
-    const sleepEnable = (configByte >> 3) & 0x01;
-    const sleepCode = (configByte >> 4) & 0x0F;
-    const sleepTime = sleepCode + 5;
+    if (configType === 0x01) {
+        const configByte = data[1];
+        const wirelessMode = (configByte >> 0) & 0x01;
+        const socd = (configByte >> 1) & 0x03;
+        const sleepEnable = (configByte >> 3) & 0x01;
+        const sleepCode = (configByte >> 4) & 0x0F;
+        const sleepTime = sleepCode + 5;
 
-    // 更新 UI（仅更新无线/睡眠字段，不修改配置类型）
-    wirelessModeSelect.value = String(wirelessMode);
-    socdSelect.value = String(socd);
-    sleepEnableSelect.value = String(sleepEnable);
-    sleepTimeInput.value = sleepTime;
+        wirelessModeSelect.value = String(wirelessMode);
+        socdSelect.value = String(socd);
+        sleepEnableSelect.value = String(sleepEnable);
+        sleepTimeInput.value = sleepTime;
 
-    updateConfigPreview();
+        updateConfigPreview();
 
-    appendLog(
-        `⚙️ 配置已解析: 类型=0x${configType.toString(16).padStart(2, '0')}` +
-        ` | 无线模式=${wirelessMode === 1 ? 'BLE' : '2.4G'}` +
-        ` | SOCD=${['回中', '后覆盖', '前覆盖', '上优先'][socd]}` +
-        ` | 睡眠=${sleepEnable === 1 ? '启用' : '禁用'}` +
-        ` | 睡眠时间=${sleepTime}分钟`,
-        'info'
-    );
+        appendLog(
+            `⚙️ 配置已解析: 类型=0x01` +
+            ` | 无线模式=${wirelessMode === 1 ? 'BLE' : '2.4G'}` +
+            ` | SOCD=${['回中', '后覆盖', '前覆盖', '上优先'][socd]}` +
+            ` | 睡眠=${sleepEnable === 1 ? '启用' : '禁用'}` +
+            ` | 睡眠时间=${sleepTime}分钟`,
+            'info'
+        );
+    } else if (configType === 0x03) {
+        // 解析网络名称 (Bytes 1-15, null-terminated ASCII)
+        const nameBytes = data.slice(1, 16);
+        const nullIdx = nameBytes.indexOf(0);
+        const nameSlice = nullIdx >= 0 ? nameBytes.slice(0, nullIdx) : nameBytes;
+        const decoder = new TextDecoder();
+        networkNameInput.value = decoder.decode(nameSlice);
+
+        updateNetworkNamePreview();
+
+        appendLog(
+            `⚙️ 配置已解析: 类型=0x03 | 网络名称="${networkNameInput.value}"`,
+            'info'
+        );
+    }
 }
 
 /**
- * 更新配置字节预览
+ * 更新配置字节预览 (0x01)
  */
 function updateConfigPreview() {
     const packed = packConfig();
-    const hexStr = Array.from(packed)
-        .map(b => b.toString(16).padStart(2, '0').toUpperCase())
-        .join(' ');
-    configPreviewSpan.textContent = hexStr;
+    configPreviewSpan.textContent = bytesToHex(packed);
+}
+
+/**
+ * 更新网络名称字节预览 (0x03)
+ */
+function updateNetworkNamePreview() {
+    const packed = packNetworkName();
+    networkNamePreviewSpan.textContent = bytesToHex(packed);
 }
 
 /**
@@ -216,7 +260,9 @@ function resetConfig() {
     socdSelect.value = String(DEFAULT_CONFIG.socd);
     sleepEnableSelect.value = String(DEFAULT_CONFIG.sleepEnable);
     sleepTimeInput.value = String(DEFAULT_CONFIG.sleepTime);
+    networkNameInput.value = DEFAULT_CONFIG.networkName;
     updateConfigPreview();
+    updateNetworkNamePreview();
     appendLog('↺ 配置已重置为默认值', 'info');
 }
 
@@ -235,13 +281,38 @@ async function sendConfig() {
     try {
         await device.sendReport(reportId, packedData);
         appendLog(
-            `📤 配置已发送 [ID=${reportId}] | 6B: ${Array.from(packedData).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ')}`,
+            `📤 配置已发送 [ID=${reportId}] | 16B: ${bytesToHex(packedData)}`,
             'sent',
             packedData
         );
     } catch (err) {
         console.error('发送配置失败:', err);
         appendLog(`❌ 发送配置失败: ${err.message}`, 'error');
+    }
+}
+
+/**
+ * 发送网络名称到设备 (Report ID = 0, Output Report, 类型 0x03)
+ */
+async function sendNetworkName() {
+    if (!device) {
+        appendLog('⚠️ 请先连接设备', 'error');
+        return;
+    }
+
+    const packedData = packNetworkName();
+    const reportId = 0;
+
+    try {
+        await device.sendReport(reportId, packedData);
+        appendLog(
+            `📤 网络名称已发送 [ID=${reportId}] | 16B: ${bytesToHex(packedData)}`,
+            'sent',
+            packedData
+        );
+    } catch (err) {
+        console.error('发送网络名称失败:', err);
+        appendLog(`❌ 发送网络名称失败: ${err.message}`, 'error');
     }
 }
 
@@ -258,11 +329,13 @@ async function readConfig() {
 
     try {
         // 根据当前激活的面板决定读取的配置类型
-        const isPanel1Active = !configPanel1.classList.contains('hidden');
-        const configType = isPanel1Active ? 0x01 : 0x02;
+        let configType = 0x01;
+        if (!configPanel2.classList.contains('hidden')) configType = 0x02;
+        else if (!configPanel3.classList.contains('hidden')) configType = 0x03;
 
-        // 先发送一个读取请求（Output Report，配置类型 + 填充）
-        const requestData = new Uint8Array([configType, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        // 先发送一个读取请求（Output Report，配置类型 + 零填充）
+        const requestData = new Uint8Array(16);
+        requestData[0] = configType;
         await device.sendReport(reportId, requestData);
         appendLog(`📤 配置读取请求已发送 [类型=0x${configType.toString(16).padStart(2, '0')}]`, 'info', requestData);
 
@@ -271,13 +344,13 @@ async function readConfig() {
         const data = new Uint8Array(reportData.buffer);
 
         appendLog(
-            `📩 配置读取响应 [ID=${reportId}] | ${data.length}B: ${Array.from(data).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ')}`,
+            `📩 配置读取响应 [ID=${reportId}] | ${data.length}B: ${bytesToHex(data)}`,
             'received',
             data
         );
 
-        // 如果至少 2 字节且是类型 0x01，尝试解析配置
-        if (data.length >= 2 && data[0] === 0x01) {
+        // 根据响应类型解析配置
+        if (data.length >= 2 && (data[0] === 0x01 || data[0] === 0x03)) {
             unpackConfig(data);
         }
 
@@ -288,7 +361,7 @@ async function readConfig() {
 }
 
 /**
- * 保存配置并重启 (发送 Report ID=0, 6字节: [0xFF][0][0][0][0][0])
+ * 保存配置并重启 (发送 Report ID=0, 16字节: [0xFF][0][0]...[0])
  */
 async function saveAndReboot() {
     if (!device) {
@@ -296,13 +369,14 @@ async function saveAndReboot() {
         return;
     }
 
-    const data = new Uint8Array([0xFF, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    const data = new Uint8Array(16);
+    data[0] = 0xFF;
     const reportId = 0;
 
     try {
         await device.sendReport(reportId, data);
         appendLog(
-            `💾 保存配置并重启命令已发送 [ID=${reportId}] | 6B: ${bytesToHex(data)}`,
+            `💾 保存配置并重启命令已发送 [ID=${reportId}] | 16B: ${bytesToHex(data)}`,
             'sent',
             data
         );
@@ -487,17 +561,13 @@ function resetKeymap() {
 
 /**
  * 发送单个键位的映射 Report
- * 6 字节: [0x02] [键位索引] [映射值1] [映射值2] [映射值3] [映射值4]
+ * 16 字节: [0x02] [键位索引] [映射值1] [映射值2] [映射值3] [映射值4] [0x00×10]
  */
 async function sendSingleKeymap(device, keyIndex, entry) {
-    const data = new Uint8Array(6);
+    const data = new Uint8Array(16);
     data[0] = 0x02;
     data[1] = keyIndex & 0xFF;
-    // 第1个字节是 primary
     data[2] = entry.primary & 0xFF;
-    // 第2~4个字节是 secondary（最多3个，因为总共6字节，第1字节类型，第2字节键位索引，第3字节primary，剩下3个给secondary）
-    // 但实际上文档说第3~6字节是按键值，共4个字节
-    // primary 占第3字节，secondary 最多3个占第4~6字节
     for (let s = 0; s < 3; s++) {
         if (s < entry.secondary.length) {
             data[3 + s] = entry.secondary[s] & 0xFF;
@@ -505,6 +575,7 @@ async function sendSingleKeymap(device, keyIndex, entry) {
             data[3 + s] = 0x13; // INVALID = 19
         }
     }
+    // bytes 6-15 已初始化为 0x00
 
     await device.sendReport(0, data);
 }
@@ -565,16 +636,18 @@ async function sendAllKeymaps() {
  * 切换到指定配置面板
  */
 function switchConfigTab(tabIndex) {
+    [configTab1, configTab2, configTab3].forEach(t => t.classList.remove('config-tab-active'));
+    [configPanel1, configPanel2, configPanel3].forEach(p => p.classList.add('hidden'));
+
     if (tabIndex === 1) {
         configTab1.classList.add('config-tab-active');
-        configTab2.classList.remove('config-tab-active');
         configPanel1.classList.remove('hidden');
-        configPanel2.classList.add('hidden');
-    } else {
+    } else if (tabIndex === 2) {
         configTab2.classList.add('config-tab-active');
-        configTab1.classList.remove('config-tab-active');
         configPanel2.classList.remove('hidden');
-        configPanel1.classList.add('hidden');
+    } else if (tabIndex === 3) {
+        configTab3.classList.add('config-tab-active');
+        configPanel3.classList.remove('hidden');
     }
     updateConfigPreview();
 }
@@ -656,8 +729,8 @@ function updateConnectionUI() {
 
     connectBtn.disabled = connected;
     disconnectBtn.disabled = !connected;
-    sendBtn.disabled = !connected;
     sendConfigBtn.disabled = !connected;
+    sendNetworkNameBtn.disabled = !connected;
     readConfigBtn.disabled = !connected;
     saveAndRebootBtn.disabled = !connected;
     sendKeymapBtn.disabled = !connected;
@@ -897,135 +970,14 @@ function clearKeymapHighlights() {
     items.forEach(item => item.classList.remove('keymap-active'));
 }
 
-/**
- * 发送数据到设备
- */
-async function sendData() {
-    if (!device) {
-        appendLog('⚠️ 请先连接设备', 'error');
-        return;
-    }
-
-    const reportIdStr = reportIdInput.value.trim();
-    const hexStr = hexDataInput.value.trim();
-
-    if (!hexStr) {
-        appendLog('⚠️ 请输入要发送的16进制数据', 'error');
-        return;
-    }
-
-    let reportId = 0;
-    try {
-        reportId = parseInt(reportIdStr, 10);
-        if (isNaN(reportId) || reportId < 0 || reportId > 255) {
-            throw new Error('Report ID 必须在 0-255 之间');
-        }
-    } catch (err) {
-        appendLog(`⚠️ ${err.message}`, 'error');
-        return;
-    }
-
-    let data;
-    try {
-        data = hexToBytes(hexStr);
-    } catch (err) {
-        appendLog(`⚠️ 数据解析错误: ${err.message}`, 'error');
-        return;
-    }
-
-    if (data.length === 0) {
-        appendLog('⚠️ 数据为空，请检查输入', 'error');
-        return;
-    }
-
-    const reportType = reportTypeSelect.value; // 'output' 或 'feature'
-
-    try {
-        if (reportType === 'output') {
-            // 发送 Output Report
-            await device.sendReport(reportId, data);
-            appendLog(
-                `📤 Output Report [ID=${reportId}] | ${data.length}B: ${bytesToHex(data)}`,
-                'sent',
-                data
-            );
-        } else {
-            // 发送 Feature Report
-            await device.sendFeatureReport(reportId, data);
-            appendLog(
-                `📤 Feature Report [ID=${reportId}] | ${data.length}B: ${bytesToHex(data)}`,
-                'sent',
-                data
-            );
-        }
-    } catch (err) {
-        console.error('发送失败:', err);
-        appendLog(`❌ 发送失败: ${err.message}`, 'error');
-    }
-}
-
-/**
- * 接收 Feature Report（获取）
- */
-async function receiveFeatureReport() {
-    if (!device) {
-        appendLog('⚠️ 请先连接设备', 'error');
-        return;
-    }
-
-    const reportIdStr = reportIdInput.value.trim();
-    let reportId = 0;
-    try {
-        reportId = parseInt(reportIdStr, 10);
-        if (isNaN(reportId) || reportId < 0 || reportId > 255) {
-            throw new Error('Report ID 必须在 0-255 之间');
-        }
-    } catch (err) {
-        appendLog(`⚠️ ${err.message}`, 'error');
-        return;
-    }
-
-    try {
-        const reportData = await device.receiveFeatureReport(reportId);
-        const data = new Uint8Array(reportData.buffer);
-
-        appendLog(
-            `📩 Feature Report [ID=${reportId}] | ${data.length}B: ${bytesToHex(data)}`,
-            'received',
-            data
-        );
-
-    } catch (err) {
-        console.error('获取 Feature Report 失败:', err);
-        appendLog(`❌ 获取 Feature Report 失败: ${err.message}`, 'error');
-    }
-}
-
 // ============ 事件绑定 ============
 
 // 连接 / 断开
 connectBtn.addEventListener('click', connectDevice);
 disconnectBtn.addEventListener('click', disconnectDevice);
 
-// 发送
-sendBtn.addEventListener('click', sendData);
-
-// 清空输入
-clearHexBtn.addEventListener('click', () => {
-    hexDataInput.value = '';
-    hexDataInput.focus();
-});
-
 // 清空报告
 clearReportsBtn.addEventListener('click', clearAllReports);
-
-// 键盘快捷发送（Ctrl+Enter / Shift+Enter）
-hexDataInput.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        e.preventDefault();
-        sendData();
-    }
-});
 
 // ============ 配置事件绑定 ============
 
@@ -1042,8 +994,13 @@ sleepTimeInput.addEventListener('input', () => {
     updateConfigPreview();
 });
 
+networkNameInput.addEventListener('input', updateNetworkNamePreview);
+
 // 发送配置按钮
 sendConfigBtn.addEventListener('click', sendConfig);
+
+// 发送网络名称按钮
+sendNetworkNameBtn.addEventListener('click', sendNetworkName);
 
 // 重置配置按钮
 resetConfigBtn.addEventListener('click', resetConfig);
@@ -1059,6 +1016,7 @@ saveAndRebootBtn.addEventListener('click', saveAndReboot);
 // 配置标签切换
 configTab1.addEventListener('click', () => switchConfigTab(1));
 configTab2.addEventListener('click', () => switchConfigTab(2));
+configTab3.addEventListener('click', () => switchConfigTab(3));
 
 // 发送全部按键映射
 sendKeymapBtn.addEventListener('click', sendAllKeymaps);
@@ -1073,6 +1031,7 @@ updateConnectionUI();
 
 // 初始化配置预览
 updateConfigPreview();
+updateNetworkNamePreview();
 
 // 初始化按键映射 UI
 renderKeymap();
@@ -1095,4 +1054,4 @@ if (navigator.hid && location.protocol !== 'https:' && location.hostname !== 'lo
     appendLog('⚠️ 当前非安全环境 (${location.protocol}//${location.host})。WebHID 需要 HTTPS 才能运行。', 'error');
 }
 
-console.log('WebHID 调试工具已启动！');
+console.log('三模HITBOX配置工具已启动！');
